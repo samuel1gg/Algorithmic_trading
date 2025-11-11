@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'trading-service'
+    static_configs:
+      - targets: ['trading-service:8000']
+    metrics_path: '/metrics'
+
+  - job_name: 'ml-service'
+    static_configs:
+      - targets: ['ml-service:8001']
+    metrics_path: '/metrics'
+
+  - job_name: 'data-ingestion'
+    static_configs:
+      - targets: ['data-ingestion:8002']
+    metrics_path: '/metrics'
+
+  - job_name: 'backtesting-service'
+    static_configs:
+      - targets: ['backtesting-service:8003']
+    metrics_path: '/metrics'
+

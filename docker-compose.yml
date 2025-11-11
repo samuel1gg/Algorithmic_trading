@@ -1,0 +1,222 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: algo_trading_postgres
+    environment:
+      POSTGRES_USER: algo_trader
+      POSTGRES_PASSWORD: secure_password_123
+      POSTGRES_DB: algo_trading
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U algo_trader"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trading_network
+
+  # Zookeeper for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: algo_trading_zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - trading_network
+
+  # Kafka
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: algo_trading_kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    networks:
+      - trading_network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Data Ingestion Service
+  data-ingestion:
+    build:
+      context: .
+      dockerfile: services/data-ingestion/Dockerfile
+    container_name: algo_trading_data_ingestion
+    depends_on:
+      - postgres
+      - kafka
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: algo_trader
+      POSTGRES_PASSWORD: secure_password_123
+      POSTGRES_DB: algo_trading
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_MARKET_DATA: market_data
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./shared:/app/shared
+      - ./database:/app/database
+      - ./services/data-ingestion:/app
+    networks:
+      - trading_network
+    restart: unless-stopped
+
+  # ML Service
+  ml-service:
+    build:
+      context: .
+      dockerfile: services/ml-service/Dockerfile
+    container_name: algo_trading_ml_service
+    depends_on:
+      - postgres
+      - kafka
+      - data-ingestion
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: algo_trader
+      POSTGRES_PASSWORD: secure_password_123
+      POSTGRES_DB: algo_trading
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_MARKET_DATA: market_data
+      KAFKA_TOPIC_TRADING_SIGNALS: trading_signals
+      KAFKA_TOPIC_ANOMALIES: anomalies
+      LSTM_SEQUENCE_LENGTH: 30
+      ANOMALY_DETECTION_THRESHOLD: 0.1
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./shared:/app/shared
+      - ./database:/app/database
+      - ./services/ml-service:/app
+      - ml_models:/app/models
+    networks:
+      - trading_network
+    restart: unless-stopped
+
+  # Trading Service
+  trading-service:
+    build:
+      context: .
+      dockerfile: services/trading-service/Dockerfile
+    container_name: algo_trading_trading_service
+    depends_on:
+      - postgres
+      - kafka
+      - ml-service
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: algo_trader
+      POSTGRES_PASSWORD: secure_password_123
+      POSTGRES_DB: algo_trading
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_TRADING_SIGNALS: trading_signals
+      INITIAL_CAPITAL: 100000.0
+      MAX_POSITION_SIZE: 0.1
+      STOP_LOSS_PERCENTAGE: 0.02
+      TAKE_PROFIT_PERCENTAGE: 0.05
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./shared:/app/shared
+      - ./database:/app/database
+      - ./services/trading-service:/app
+    networks:
+      - trading_network
+    restart: unless-stopped
+    command: >
+      sh -c "sleep 10 && 
+             python -m database.migrations.init_db && 
+             python main.py"
+
+  # Backtesting Service
+  backtesting-service:
+    build:
+      context: .
+      dockerfile: services/backtesting-service/Dockerfile
+    container_name: algo_trading_backtesting_service
+    depends_on:
+      - postgres
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: algo_trader
+      POSTGRES_PASSWORD: secure_password_123
+      POSTGRES_DB: algo_trading
+    ports:
+      - "8003:8003"
+    volumes:
+      - ./shared:/app/shared
+      - ./database:/app/database
+      - ./services/backtesting-service:/app
+    networks:
+      - trading_network
+    restart: unless-stopped
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: algo_trading_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - trading_network
+    restart: unless-stopped
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: algo_trading_grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    depends_on:
+      - prometheus
+    networks:
+      - trading_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:
+  ml_models:
+
+networks:
+  trading_network:
+    driver: bridge
+

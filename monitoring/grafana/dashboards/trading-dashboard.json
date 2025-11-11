@@ -1,0 +1,48 @@
+{
+  "dashboard": {
+    "title": "Algorithmic Trading Dashboard",
+    "panels": [
+      {
+        "title": "Portfolio Value",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "portfolio_total_value",
+            "legendFormat": "Total Value"
+          }
+        ]
+      },
+      {
+        "title": "Trading Signals",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(trading_signals_total[5m])",
+            "legendFormat": "Signals/min"
+          }
+        ]
+      },
+      {
+        "title": "Anomalies Detected",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(anomalies_detected_total[5m])",
+            "legendFormat": "Anomalies/min"
+          }
+        ]
+      },
+      {
+        "title": "Orders Executed",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(orders_executed_total[5m])",
+            "legendFormat": "Orders/min"
+          }
+        ]
+      }
+    ]
+  }
+}
+
